@@ -8,6 +8,7 @@
 
 #include <linux/buffer_head.h>
 #include <linux/mount.h>
+#include <linux/mpage.h>
 #include <linux/string.h>
 #include "sysv.h"
 
@@ -183,7 +184,7 @@ static inline int splice_branch(struct inode *inode,
 	*where->p = where->key;
 	write_unlock(&pointers_lock);
 
-	inode->i_ctime = current_time(inode);
+	inode_set_ctime_current(inode);
 
 	/* had we spliced it onto indirect block? */
 	if (where->bh)
@@ -423,7 +424,7 @@ do_indirects:
 		}
 		n++;
 	}
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
 	if (IS_SYNC(inode))
 		sysv_sync_inode (inode);
 	else
@@ -449,15 +450,17 @@ int sysv_getattr(struct mnt_idmap *idmap, const struct path *path,
 		 struct kstat *stat, u32 request_mask, unsigned int flags)
 {
 	struct super_block *s = path->dentry->d_sb;
-	generic_fillattr(&nop_mnt_idmap, d_inode(path->dentry), stat);
+	generic_fillattr(&nop_mnt_idmap, request_mask, d_inode(path->dentry),
+			 stat);
 	stat->blocks = (s->s_blocksize / 512) * sysv_nblocks(s, stat->size);
 	stat->blksize = s->s_blocksize;
 	return 0;
 }
 
-static int sysv_writepage(struct page *page, struct writeback_control *wbc)
+static int sysv_writepages(struct address_space *mapping,
+		struct writeback_control *wbc)
 {
-	return block_write_full_page(page,get_block,wbc);
+	return mpage_writepages(mapping, wbc, get_block);
 }
 
 static int sysv_read_folio(struct file *file, struct folio *folio)
@@ -502,8 +505,9 @@ const struct address_space_operations sysv_aops = {
 	.dirty_folio = block_dirty_folio,
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio = sysv_read_folio,
-	.writepage = sysv_writepage,
+	.writepages = sysv_writepages,
 	.write_begin = sysv_write_begin,
 	.write_end = generic_write_end,
+	.migrate_folio = buffer_migrate_folio,
 	.bmap = sysv_bmap
 };
